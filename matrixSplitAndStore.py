@@ -7,28 +7,32 @@ import glob
 import os
 
 # code for processing matrices from BrainWave which is a file with varying number of 
-# matrices consisting of three rows of texts of NaNs followed by number of rows
-# corresponding to the number of rois from the atlas used.
+# matrices consisting of three rows of texts or NaNs followed by number of rows (row with filename, row with epoch name and 
+# blank row between matrices)
+# The rows of the matrices correspond to the number of rois from the atlas used.
 # the code checks dimensions, removes columns and rows that contain NaNs
 # and stores all separate matrices into different files containing part of the filename and an epochnumber
 
-############### INSERT fixed variables #####################################################################
-
-# insert fixed part
-baseFileName = "AECcTheta_" # to indicate the fixed filename
+###### Adjust according to needs: ########
 
 # Read the CSV file into a DataFrame, no header 
-df_mymatrix = pd.read_csv('/Users/ilsevanstraaten/Documents/research/MNEandBCT/BWmatrices/myMatrixAECcTheta141_143 kopie.csv', delimiter=';', header = None)
+df_mymatrix = pd.read_csv('/Users/ilsevanstraaten/Documents/research/MEG_TUe/MergedMatricesMaartje/aeccmatrices_merged/Matrix_1031_1040_vectorview_8_16hz_aecc', delimiter='\t', header = None, low_memory=False)
+
+# output path:
+outputpath = '/Users/ilsevanstraaten/Documents/research/MNEandBCT/BWmatrices/output/matrices/'
 
 # indicate matrix dimensions
-number_of_rois = 246 # adjust according atlas used, default BMA
+number_of_rois = 246 # adjust according atlas used, default BNA
 
 # indicate how many characters of the filename to be included in the matrixnames
-number_of_title_letters = 4 # default 4
+number_of_title_letters = 4
+
+# indicate other title text
+titleInfo = 'AECc_8_16Hz'
 
 ##############################################################################################
 
-outputpath = ('/Users/ilsevanstraaten/Documents/research/MNEandBCT/BWmatrices/output/')
+outputpath = ('/Users/ilsevanstraaten/Documents/research/MNEandBCT/BWmatrices/output/matrices/')
 # check file
 if (len(df_mymatrix)<1):
     print("No file found")
@@ -36,16 +40,25 @@ else:
     print("file read")
 
 # variables
-titlepart = ".asc" # matrixheader cells containing the identifier end with ,asc
+titlepart = "File" # matrixheader cells containing the identifier end with ,asc
 titlelist = []
+titlelist_short = []
 epoch_word = "Epoch"
 epoch_list = []
 
 # definitions
 def check_file(df):
+    print(df.shape)
     if df.shape[1] != number_of_rois:
         print("input matrix has different shape than indicated")
-        # Check if the last column contains only NaNs
+        print("Dimensions are: ", df.shape[1])
+        # Check if all columns are collapsed into one column
+        if df.shape[1] == 1:
+            df_split = df.loc[:, 0].str.split(expand=True)
+            print('shape is now:', df_split.shape)
+            if df_split.shape[1] == number_of_rois: #when dimensions are correct
+                df = df_split
+        # Check if the last column contains only NaNs and remove column if it does
         if df.iloc[:, -1].isna().all():
             # Remove the last column
             df = df.iloc[:, :-1]
@@ -53,72 +66,100 @@ def check_file(df):
             print("Dimensions are now: ", df.shape[1])
     else:
         print("matrix dimensions are correct")
+    print(df.shape)
+
     return df
 
-def split_and_store(df, base_filename):
-    # Identify rows containing any NaN
-    nan_indices = df[df.isna().any(axis=1)].index.tolist()
+# matrices that are stored as single matrices containing only numbers need a filename that identifies the matrix
+# therefore, information from the header of each matrix is extracted and stored for later use in the matrix file names
+# first row of the header, second cell, gives the filename of the ascii file of the signal, the second row, second cell
+# gives the epoch number of the analysed file 
+def storeTitle(df):
+    if df.shape[1] != number_of_rois:
+        print('dimensions are still not correct')
+    
+    # if correct dimensions, loop over all rows in the df 
+    else: 
+        for index, row in df.iterrows():
+           #print(index)
+            if titlepart in str(row[0]): 
+                titlelist.append(row[1])
+            if epoch_word in str(row[0]):
+                epoch_list.append(row[1]) 
+    
+        # Select the first 4 letters of each string
+        titlelist_short = [string[:4] for string in titlelist]  
+        # Combine the lists by row
+        filenames = [a + '_' + b for a, b in zip(titlelist_short, epoch_list)]
+        print(f"Filenames are: {filenames}")
+        return filenames, titlelist_short
 
-    # store matrix names, containing file and epochnumber
-    df.applymap(store_matrixtitles)
-    store_epochnumber(df)
-    # Combine the lists
-    filenames = [a + '_' + b for a, b in zip(titlelist, epoch_list)]
-    print(f"Filenames are: {filenames}")
+def checkType(df):
+    # Check the type of the value in the first row and second column (indexing starts from 0)
+    cell_value = df.iloc[100, 100]
+    print(type(cell_value), cell_value)
+    # concluding: cells are strings and
+    # cells in column 100 are None in rows 0 and 1, and a value stored as string in row 2, 3, 100 etc
 
-    # Initialize start index
-    start_idx = 0
-    counter = 0 # for looping over filenames list
-    # Split and save chunks
-    for i, nan_idx in enumerate(nan_indices):
-        # Extract chunk
-        chunk = df.iloc[start_idx:nan_idx]
-        
-        # If chunk is not empty, save it to a file
-        if not chunk.empty:
-            #filename = f"{base_filename}_part{i + 1}.csv"
-            filename = f"{base_filename}_{filenames[counter]}.csv"
-            chunk.to_csv(outputpath+filename, index=False)
-            print(f"Saved {filename}")
-            counter = counter +1
-        
-        # Update start index to the row after the current NaN row
-        start_idx = nan_idx + 1
+    # Convert columns and coerce errors (invalid strings will be NaN)
+    df_numbers = df.apply(pd.to_numeric, errors='coerce')
+    return df_numbers 
 
-    # Handle the last chunk if there are rows after the last NaN row
-    chunk = df.iloc[start_idx:]
-    if not chunk.empty:
-        #filename = f"{base_filename}_part{len(nan_indices) + 1}.csv"
-        filename = f"{base_filename}_{filenames[counter]}.csv"
-        chunk.to_csv(outputpath+filename, index=False)
-        print(f"Saved {filename}")
+# split matrices according to the NaN rows in between
+def split_and_store(df, filenames):
+    # Step 1: Identify rows where any number exists (rows that are not all NaN)
+    # This creates a boolean column (valid_row) that is True if any value in that row is a valid number 
+    # (not NaN), and False otherwise.
+    df['valid_row'] = df.notna().any(axis=1)
 
-    # Remove rows with NaNs
-    df_cleaned = df.dropna()
-    return df_cleaned
+    # Step 2: Identify consecutive groups of valid rows
+    # Every time a True switches to False or vice versa, a new group is started.
+    df['group'] = (df['valid_row'] != df['valid_row'].shift()).cumsum()
+   
+    # Step 3: Group consecutive rows and save the valid ones to separate files
+    # This filters out the NaN rows and groups the valid rows by their group number. 
+    # The for loop iterates through each group, drops the helper columns (valid_row, group), 
+    # and saves the result to separate CSV files.
+    grouped = df[df['valid_row']].groupby('group')
 
-def store_matrixtitles(cell):
-    if titlepart in str(cell):
-        titlelist.append(cell)
-    # Modify each entry to contain only the first characters
-    for i in range(len(titlelist)):
-        titlelist[i] = titlelist[i][:number_of_title_letters] 
+    # check dimensions of titlelist_short and filenames lists
+    print('shape titlelist_short: ', len(titlelist_short) )
+    print('shape of filenames: ', len(filenames) )
 
-def store_epochnumber(df):
-    # Iterate through the DataFrame
-    for index, row in df.iterrows():
-        for col in range(df.shape[1] - 1):  # Exclude the last column as there is no next cell
-            if epoch_word in str(row[col]):
-                epoch_list.append(row[col + 1])
+    # Iterate through each group and save the consecutive rows with numbers to separate files
+    i = 0
+    for idx, group in grouped:
+        file_name = filenames[i]
+        group2 = group.drop(columns=['valid_row', 'group'])
+        group3 = group2.iloc[1:] # leave first row with epoch number out of matrix
+
+        # Directory name
+        directory = titlelist_short[i]
+        # Create the directory if it doesn't exist
+        try:
+        # Attempt to create the directory
+            os.mkdir(outputpath+directory)
+        except FileExistsError:
+            # Handle the case where the directory already exists
+            print(f"The directory '{outputpath+directory}' already exists.")
+
+        if (group3.iloc[-1] == 0).all(): # save only if group (= individual matrix) is complete, no zero's only in last row
+            print('alleen nullen')
+        else:
+            group3.to_csv(outputpath+directory+'/'+file_name+'_'+titleInfo+'.csv', index=False)
+            print(f"Saved {file_name}")
+        i = i+1
 
 ########### Run code #########################################################################
 # check and correct matrix dimensions
-df_mymatrix = check_file(df_mymatrix)
+df_mymatrix2 = check_file(df_mymatrix)
+
+# make list with names of ascii and epochs to be used as matrix file names
+filenameslist, titlelist_short = storeTitle(df_mymatrix2)
+df_mymatrix3 = checkType(df_mymatrix2)
 
 # split file with matrices into separate matrices
-df_cleaned = split_and_store(df_mymatrix, baseFileName)
-print(df_cleaned)
-print(f"Matrix dimensions: {df_cleaned.shape}")
+split_and_store(df_mymatrix3, filenameslist)
 
 
 
